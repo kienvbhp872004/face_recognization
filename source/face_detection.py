@@ -11,58 +11,6 @@ def euclidean(a, b):
     return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
-def check_blurriness_gaussian(image, threshold=10):
-
-    if image is None:
-        print("Không thể đọc ảnh!")
-        return None
-
-    blurred = cv2.GaussianBlur(image, (9, 9), 0)
-    diff = cv2.absdiff(image, blurred)
-    mean_diff = np.mean(diff)
-
-    print(f"Độ sắc nét (Gaussian Diff): {mean_diff:.2f}")
-
-    # if mean_diff < threshold:
-    #     return "Ảnh bị mờ!"
-    # else:
-    #     return "Ảnh sắc nét!"
-    return mean_diff
-
-
-import cv2
-import numpy as np
-
-
-def check_blurriness_tenengrad(image, threshold=500):
-    if image is None:
-        print("Không thể đọc ảnh!")
-        return None
-
-    sobel_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
-    sobel_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
-    gradient_magnitude = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
-
-    sharpness = np.mean(gradient_magnitude)  # Tính trung bình độ sắc nét
-
-    print(f"Độ sắc nét (Tenengrad): {sharpness:.2f}")
-
-    if sharpness < threshold:
-        print("Ảnh bị mờ!")
-    else:
-        print("Ảnh sắc nét!")
-
-    return sharpness
-
-
-# Kiểm tra ảnh
-
-
-
-
-
-# Kiểm tra ảnh
-image_path = "path/to/image.jpg"
 
 # Tính Eye Aspect Ratio (EAR) để phát hiện chớp mắt
 def EAR(eye):
@@ -86,8 +34,11 @@ closedEyes = False
 counterBlink = 0
 authentication = True
 user_id = "20224869"
-save_dir = os.path.join("data\image", user_id)
+save_dir = os.path.join("data_raw\image", user_id)
 os.makedirs(save_dir, exist_ok=True)
+BRIGHTNESS_THRESHOLD = 100
+BLUR_SOBEL_THRESHOLD = 27
+image_path = "path/to/image.jpg"
 # Khởi tạo webcam và detector
 cap = cv2.VideoCapture(0)
 cap.set(3, CAM_WIDTH)
@@ -112,6 +63,23 @@ def state_face(pitch, yaw):
         return "Head tilted up"
     elif abs(yaw) < BALANCE_THRESHOLD and abs(pitch) > -BALANCE_THRESHOLD:
         return "Head facing forward"
+
+def detect_blur_sobel(image, threshold=50):  # Điều chỉnh threshold tùy vào ảnh
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Tính Sobel theo cả hai hướng x và y
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)  # Đạo hàm bậc 1 theo x
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)  # Đạo hàm bậc 1 theo y
+
+    # Tính độ lớn của gradient (magnitude)
+    gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
+
+    # Tính giá trị trung bình của độ lớn gradient
+    mean_gradient = np.mean(gradient_magnitude)
+    return mean_gradient
+
+def brightness_mean(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Chuyển sang ảnh xám
+    return np.mean(gray)  # Trung bình giá trị pixel
 
 
 while True:
@@ -163,7 +131,6 @@ while True:
             cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
         cv2.putText(img, state_face(pitch, yaw), (x_min_scale , y_min_scale - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (0, 0, 255), 2, cv2.LINE_AA)
-        cv2.imshow("Face Mesh", img)
 
         ## Chuẩn hóa khuôn mặt
         w = x_max_scale - x_min_scale
@@ -176,10 +143,15 @@ while True:
         if authentication:
             face = img[y_min_scale:y_max_scale, x_min_scale:x_max_scale]
             if cv2.waitKey(1) & 0xFF == ord('s'):
-                img_path = os.path.join(save_dir, f"{user_id}_{state_face(pitch, yaw)}_{check_blurriness_tenengrad(face)}_{random.randint(0,100)}.jpg")
-                cv2.imwrite(img_path, face)
-                print(f"Image saved to {img_path}")
+                img_path = os.path.join(save_dir, f"{user_id}_{state_face(pitch, yaw)}_{detect_blur_sobel(face)}_{random.randint(0,100)}.jpg")
+                if brightness_mean(face) > BRIGHTNESS_THRESHOLD and detect_blur_sobel(face) > BLUR_SOBEL_THRESHOLD:
+                    cv2.imwrite(img_path, face)
+                    print(f"Image saved to {img_path}")
                 # authentication = False
+            cv2.putText(img, f"{brightness_mean(face)}", (x_min_scale, y_min_scale - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.imshow("Face Mesh", img)
+
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
