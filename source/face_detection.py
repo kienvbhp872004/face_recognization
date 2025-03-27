@@ -33,7 +33,7 @@ FRAME_THRESHOLD = 3
 closedEyes = False
 counterBlink = 0
 authentication = True
-user_id = "20224869"
+user_id = "20228683"
 save_dir = os.path.join("data_raw\image", user_id)
 os.makedirs(save_dir, exist_ok=True)
 BRIGHTNESS_THRESHOLD = 100
@@ -127,8 +127,8 @@ while True:
         if closedEyes and ear_left > THRESHOLD_EAR and ear_right > THRESHOLD_EAR:
             print("Chớp mắt")
             closedEyes = False
-        for key, (x, y) in points.items():
-            cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
+        # for key, (x, y) in points.items():
+        #     cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
         cv2.putText(img, state_face(pitch, yaw), (x_min_scale , y_min_scale - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (0, 0, 255), 2, cv2.LINE_AA)
 
