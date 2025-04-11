@@ -33,11 +33,11 @@ FRAME_THRESHOLD = 3
 closedEyes = False
 counterBlink = 0
 authentication = True
-user_id = "20228683"
+user_id = "20224981"
 save_dir = os.path.join("data_raw\image", user_id)
 os.makedirs(save_dir, exist_ok=True)
 BRIGHTNESS_THRESHOLD = 100
-BLUR_SOBEL_THRESHOLD = 27
+BLUR_SOBEL_THRESHOLD = 20
 image_path = "path/to/image.jpg"
 # Khởi tạo webcam và detector
 cap = cv2.VideoCapture(0)

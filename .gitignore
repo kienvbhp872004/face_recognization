@@ -1,0 +1,68 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+
+# Mac
+.DS_Store
+
+# Kaggle metadata
+kaggle.json
+
+# Python log files
+*.log
+
+# TensorFlow / Keras
+checkpoint
+*.ckpt
+*.pb
+*.h5
+*.tflite
+
+# Data
+*.csv
+*.zip
+*.tar.gz
+*.npz
+*.npy
+*.db
+*.sqlite
+
+# Images & videos
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.mp4
+*.avi
+
+# Models
+models/
+runs/
+logs/
+
+# Notebook outputs
+*.out
+Dataset/
