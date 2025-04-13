@@ -1,17 +1,44 @@
 import random
+from sklearn.metrics.pairwise import cosine_similarity
 
 import cv2
 import numpy as np
 from cvzone.FaceMeshModule import FaceMeshDetector
 import os
-
-
+from tensorflow.keras.models import load_model, Model
+model = load_model(r'C:\Users\admin\OneDrive - Hanoi University of Science and Technology\Documents\GitHub\PTTK\face_recognization\model\my_model.h5')
+embedding_model = Model(inputs=model.input,
+                        outputs=model.get_layer('flatten').output)
+saved_embeddings = np.load('user_embeddings.npy')
+saved_labels = np.load('user_labels.npy', allow_pickle=True)
 # Hàm tính khoảng cách Euclidean giữa hai điểm
 def euclidean(a, b):
     return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
+def preprocessing(image):
+    image = cv2.resize(image, (64, 64))
+    image = image.astype(np.float32) / 255.0
+    return image
+def predict_face(face, embedding_model, saved_embeddings, saved_labels, threshold=0.4):
+    # Tiền xử lý ảnh
+    img = preprocessing(face)
 
+    # Lấy embedding
+    emb = embedding_model.predict(img[np.newaxis])[0]
+
+    # Tính cosine similarity
+    similarities = cosine_similarity([emb], saved_embeddings)[0]
+    best_idx = np.argmax(similarities)
+    confidence = similarities[best_idx]
+
+    # Kiểm tra độ tin cậy
+    if confidence >= threshold:
+        predicted_label = saved_labels[best_idx]
+    else:
+        predicted_label = "Unknown"
+
+    return predicted_label, confidence
 # Tính Eye Aspect Ratio (EAR) để phát hiện chớp mắt
 def EAR(eye):
     A = euclidean(eye[1], eye[5])
@@ -26,13 +53,14 @@ THRESHOLD_EAR = 0.2  # Ngưỡng phát hiện chớp mắt
 PITCH_THRESHOLD = 10  # Ngưỡng phát hiện ngửa mặt
 YAW_THRESHOLD = 20
 BALANCE_THRESHOLD = 35
+THRESHOLD_AUTHENCATION = 40
 offsetX = 0.2
 offsetY = 0.3
 offsetYaw = 45
 FRAME_THRESHOLD = 3
 closedEyes = False
 counterBlink = 0
-authentication = True
+authentication = False
 user_id = "20224981"
 save_dir = os.path.join("data_raw\image", user_id)
 os.makedirs(save_dir, exist_ok=True)
@@ -129,9 +157,6 @@ while True:
             closedEyes = False
         # for key, (x, y) in points.items():
         #     cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
-        cv2.putText(img, state_face(pitch, yaw), (x_min_scale , y_min_scale - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (0, 0, 255), 2, cv2.LINE_AA)
-
         ## Chuẩn hóa khuôn mặt
         w = x_max_scale - x_min_scale
         h = y_max_scale - y_min_scale
@@ -139,17 +164,30 @@ while True:
         y_top_left = y_min_scale / CAM_HEIGHT
         x_bottom_right = x_min_scale / CAM_WIDTH
         y_bottom_right = y_min_scale / CAM_HEIGHT
-        ## Lưu ảnh
+        face = img[y_min_scale:y_max_scale, x_min_scale:x_max_scale]
         if authentication:
-            face = img[y_min_scale:y_max_scale, x_min_scale:x_max_scale]
             if cv2.waitKey(1) & 0xFF == ord('s'):
                 img_path = os.path.join(save_dir, f"{user_id}_{state_face(pitch, yaw)}_{detect_blur_sobel(face)}_{random.randint(0,100)}.jpg")
                 if brightness_mean(face) > BRIGHTNESS_THRESHOLD and detect_blur_sobel(face) > BLUR_SOBEL_THRESHOLD:
                     cv2.imwrite(img_path, face)
                     print(f"Image saved to {img_path}")
                 # authentication = False
+            cv2.putText(img, state_face(pitch, yaw), (x_min_scale, y_min_scale - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (0, 0, 255), 2, cv2.LINE_AA)
             cv2.putText(img, f"{brightness_mean(face)}", (x_min_scale, y_min_scale - 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+        else:
+            label, conf = predict_face(face, embedding_model, saved_embeddings, saved_labels)
+            cv2.putText(img, f"User: {label}",
+                        (x_min_scale, y_min_scale - 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1, (0, 0, 255), 2, cv2.LINE_AA)
+
+            # Hiển thị độ tự tin (confidence), làm tròn 2 chữ số
+            cv2.putText(img, f"Confidence: {conf:.2f}",
+                        (x_min_scale, y_min_scale - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.9, (0, 0, 255), 2, cv2.LINE_AA)
         cv2.imshow("Face Mesh", img)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
