@@ -1,45 +1,142 @@
-import random
-from sklearn.metrics.pairwise import cosine_similarity
-
+import os
 import cv2
 import numpy as np
-from cvzone.FaceMeshModule import FaceMeshDetector
-import os
+import random
+
+from PIL import Image
 from tensorflow.keras.models import load_model, Model
-model = load_model(r'C:\Users\admin\OneDrive - Hanoi University of Science and Technology\Documents\GitHub\PTTK\face_recognization\model\my_model.h5')
-embedding_model = Model(inputs=model.input,
-                        outputs=model.get_layer('flatten').output)
+from facenet_pytorch import InceptionResnetV1
+import torch
+from torchvision import transforms
+from sklearn.metrics.pairwise import cosine_similarity
+from cvzone.FaceMeshModule import FaceMeshDetector
+import joblib
+
+### ========== CẤU HÌNH ==========
+CAM_WIDTH, CAM_HEIGHT = 640, 480
+THRESHOLD_EAR = 0.2
+PITCH_THRESHOLD = 10
+YAW_THRESHOLD = 20
+BALANCE_THRESHOLD = 35
+THRESHOLD_AUTHENTICATION = 40
+BRIGHTNESS_THRESHOLD = 100
+BLUR_SOBEL_THRESHOLD = 20
+FRAME_THRESHOLD = 3
+offsetX, offsetY, offsetYaw = 0.2, 0.3, 45
+
+user_id = "2"
+save_dir = os.path.join("data_raw", "image", user_id)
+os.makedirs(save_dir, exist_ok=True)
+model_type = "facenet"  # Chọn mô hình: "resnet50" hoặc "facenet"
+
+### ========== LOAD MODEL ==========
+# Load resnet50 (TensorFlow)
+try:
+    model = load_model(
+        r'C:\Users\admin\OneDrive - Hanoi University of Science and Technology\Documents\GitHub\PTTK\face_recognization\model\resnet50.h5')
+    embedding_model = Model(inputs=model.input, outputs=model.get_layer('flatten_1').output)
+except Exception as e:
+    print("Lỗi khi load model resnet50:", e)
+    exit()
+
+# Load facenet (PyTorch)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+resnet = InceptionResnetV1(pretrained='vggface2').to(device)
+resnet.eval()
+
+# Preprocessing pipeline cho facenet
+preprocess_facenet = transforms.Compose([
+    transforms.Resize((160, 160)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+])
+
+
+def load_embeddings_and_model(embed_path='embeddings.npy',
+                              label_path='labels.npy',
+                              model_path='svm_model.joblib',
+                              encoder_path='label_encoder.joblib'):
+    """Tải embedding, nhãn, mô hình SVM và LabelEncoder."""
+    if not all(os.path.exists(path) for path in [embed_path, label_path, model_path, encoder_path]):
+        raise FileNotFoundError(
+            f"One or more files not found: {embed_path}, {label_path}, {model_path}, {encoder_path}")
+
+    X_embed = np.load(embed_path)
+    y = np.load(label_path)
+    svm_model = joblib.load(model_path)
+    label_encoder = joblib.load(encoder_path)
+
+    print(f"Loaded embeddings from {embed_path}, shape: {X_embed.shape}")
+    print(f"Loaded labels from {label_path}, shape: {y.shape}")
+    print(f"Loaded SVM model from {model_path}")
+    print(f"Loaded LabelEncoder from {encoder_path}")
+
+    return X_embed, y, svm_model, label_encoder
+
+
+# Tải embedding và nhãn cho cả hai mô hình
 saved_embeddings = np.load('user_embeddings.npy')
 saved_labels = np.load('user_labels.npy', allow_pickle=True)
-# Hàm tính khoảng cách Euclidean giữa hai điểm
-def euclidean(a, b):
-    return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+if model_type == 'facenet':
+    X_embed_loaded, y_loaded, svm_model_loaded, label_encoder_loaded = load_embeddings_and_model(
+        embed_path='embeddings.npy',
+        label_path='labels.npy',
+        model_path='svm_model.joblib',
+        encoder_path='label_encoder.joblib'
+    )
 
 
-def preprocessing(image):
-    image = cv2.resize(image, (64, 64))
-    image = image.astype(np.float32) / 255.0
-    return image
-def predict_face(face, embedding_model, saved_embeddings, saved_labels, threshold=0.4):
-    # Tiền xử lý ảnh
-    img = preprocessing(face)
+### ========== HÀM DỰ ĐOÁN ==========
+def predict_face(image_input, threshold=0.4):
+    """
+    Dự đoán nhãn và độ tự tin từ ảnh khuôn mặt.
 
-    # Lấy embedding
-    emb = embedding_model.predict(img[np.newaxis])[0]
+    Parameters:
+    - image_input: Mảng NumPy (H, W, 3)
+    - threshold: Ngưỡng độ tự tin cho resnet50 (cosine similarity)
 
-    # Tính cosine similarity
-    similarities = cosine_similarity([emb], saved_embeddings)[0]
-    best_idx = np.argmax(similarities)
-    confidence = similarities[best_idx]
+    Returns:
+    - label: Nhãn dự đoán (string, ví dụ: 'person1' hoặc 'Unknown')
+    - confidence: Độ tự tin (float, trong khoảng [0, 1])
+    """
+    if not isinstance(image_input, np.ndarray) or image_input.ndim != 3 or image_input.shape[-1] != 3:
+        raise ValueError(
+            f"Invalid image_input: Expected NumPy array with shape (H, W, 3), got {image_input.shape if isinstance(image_input, np.ndarray) else type(image_input)}")
 
-    # Kiểm tra độ tin cậy
-    if confidence >= threshold:
-        predicted_label = saved_labels[best_idx]
+    if model_type == "resnet50":
+        # Preprocessing cho resnet50
+        img = cv2.resize(image_input, (112, 112))
+        img = img.astype(np.float32) / 255.0
+        emb = embedding_model.predict(img[np.newaxis])[0]
+        similarities = cosine_similarity([emb], saved_embeddings)[0]
+        best_idx = np.argmax(similarities)
+        confidence = similarities[best_idx]
+        label = saved_labels[best_idx] if confidence >= threshold else "Unknown"
+    elif model_type == "facenet":
+        # Preprocessing cho facenet
+        if image_input.shape[0] in [1, 3]:  # (C, H, W)
+            image_input = image_input.transpose(1, 2, 0)  # Chuyển thành (H, W, C)
+        if image_input.dtype != np.uint8:
+            image_input = (image_input * 255).clip(0, 255).astype(np.uint8)
+        image = Image.fromarray(image_input)
+        image_tensor = preprocess_facenet(image).unsqueeze(0).to(device)
+        with torch.no_grad():
+            embedding = resnet(image_tensor).cpu().detach().numpy().squeeze(0)
+        pred = svm_model_loaded.predict([embedding])
+        pred_proba = svm_model_loaded.predict_proba([embedding])
+        label = label_encoder_loaded.inverse_transform(pred)[0]
+        confidence = np.max(pred_proba, axis=1)[0]
     else:
-        predicted_label = "Unknown"
+        raise ValueError(f"Invalid model_type: {model_type}. Expected 'resnet50' or 'facenet'")
 
-    return predicted_label, confidence
-# Tính Eye Aspect Ratio (EAR) để phát hiện chớp mắt
+    return label, confidence
+
+
+### ========== HÀM HỖ TRỢ ==========
+def euclidean(a, b):
+    return np.linalg.norm(np.array(a) - np.array(b))
+
+
 def EAR(eye):
     A = euclidean(eye[1], eye[5])
     B = euclidean(eye[2], eye[4])
@@ -47,147 +144,93 @@ def EAR(eye):
     return (A + B) / (2.0 * C)
 
 
-# Cấu hình tham số
-CAM_WIDTH, CAM_HEIGHT = 640, 480
-THRESHOLD_EAR = 0.2  # Ngưỡng phát hiện chớp mắt
-PITCH_THRESHOLD = 10  # Ngưỡng phát hiện ngửa mặt
-YAW_THRESHOLD = 20
-BALANCE_THRESHOLD = 35
-THRESHOLD_AUTHENCATION = 40
-offsetX = 0.2
-offsetY = 0.3
-offsetYaw = 45
-FRAME_THRESHOLD = 3
-closedEyes = False
-counterBlink = 0
-authentication = False
-user_id = "20224981"
-save_dir = os.path.join("data_raw\image", user_id)
-os.makedirs(save_dir, exist_ok=True)
-BRIGHTNESS_THRESHOLD = 100
-BLUR_SOBEL_THRESHOLD = 20
-image_path = "path/to/image.jpg"
-# Khởi tạo webcam và detector
+def state_face(pitch, yaw):
+    if yaw > YAW_THRESHOLD:
+        return "Head tilted up"
+    elif pitch > PITCH_THRESHOLD:
+        return "Head turned right"
+    elif pitch < -PITCH_THRESHOLD:
+        return "Head turned left"
+    elif abs(yaw) < BALANCE_THRESHOLD:
+        return "Head facing forward"
+    return "Unknown"
+
+
+def detect_blur_sobel(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_magnitude = np.sqrt(sobelx ** 2 + sobely ** 2)
+    return np.mean(gradient_magnitude)
+
+
+def brightness_mean(image):
+    return np.mean(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+
+
+### ========== KHỞI TẠO ==========
 cap = cv2.VideoCapture(0)
 cap.set(3, CAM_WIDTH)
 cap.set(4, CAM_HEIGHT)
 detector = FaceMeshDetector(maxFaces=1)
+IDXS = {"nose": 1, "chin": 199, "left_eye": 33, "right_eye": 263, "left_mouth": 61, "right_mouth": 291}
+closedEyes = False
+authentication = False
 
-# Chỉ số các điểm đặc trưng trên mặt
-IDXS = {
-    "nose": 1, "chin": 199,
-    "left_eye": 33, "right_eye": 263,
-    "left_mouth": 61, "right_mouth": 291
-}
-
-
-# Hàm tính toán
-def state_face(pitch, yaw):
-    if pitch > PITCH_THRESHOLD:
-        return "Head turned right"
-    elif pitch < -PITCH_THRESHOLD:
-        return "Head turned left"
-    elif yaw > YAW_THRESHOLD:
-        return "Head tilted up"
-    elif abs(yaw) < BALANCE_THRESHOLD and abs(pitch) > -BALANCE_THRESHOLD:
-        return "Head facing forward"
-
-def detect_blur_sobel(image, threshold=50):  # Điều chỉnh threshold tùy vào ảnh
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    # Tính Sobel theo cả hai hướng x và y
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)  # Đạo hàm bậc 1 theo x
-    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)  # Đạo hàm bậc 1 theo y
-
-    # Tính độ lớn của gradient (magnitude)
-    gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
-
-    # Tính giá trị trung bình của độ lớn gradient
-    mean_gradient = np.mean(gradient_magnitude)
-    return mean_gradient
-
-def brightness_mean(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Chuyển sang ảnh xám
-    return np.mean(gray)  # Trung bình giá trị pixel
-
-
+### ========== VÒNG LẶP CHÍNH ==========
 while True:
     success, img = cap.read()
     if not success:
         break
 
     img, faces = detector.findFaceMesh(img, draw=False)
-
     if faces:
         face = faces[0]
         x_vals = [p[0] for p in face]
         y_vals = [p[1] for p in face]
-
-        # Tính bbox
         x_min, x_max = min(x_vals), max(x_vals)
         y_min, y_max = min(y_vals), max(y_vals)
-        x_min_scale = int(x_min - offsetX * (x_max - x_min))
-        y_min_scale = int(y_min - offsetY * (y_max - y_min))
-        x_max_scale = int(x_max + offsetX * (x_max - x_min))
-        y_max_scale = int(y_max + 0.5 * offsetY * (y_max - y_min))
-        # Vẽ bounding box lên ảnh
-        cv2.rectangle(img, (x_min_scale, y_min_scale), (x_max_scale, y_max_scale), (0, 255, 0), 2)
-        # Lấy các điểm mắt
+        x_min_s, y_min_s = int(x_min - offsetX * (x_max - x_min)), int(y_min - offsetY * (y_max - y_min))
+        x_max_s, y_max_s = int(x_max + offsetX * (x_max - x_min)), int(y_max + 0.5 * offsetY * (y_max - y_min))
+
+        face_crop = img[y_min_s:y_max_s, x_min_s:x_max_s]
+        if face_crop.size == 0:
+            continue
+
         leftEye = [face[i] for i in [33, 160, 158, 133, 153, 144]]
         rightEye = [face[i] for i in [362, 385, 387, 263, 373, 380]]
+        ear_left, ear_right = EAR(leftEye), EAR(rightEye)
 
-        # Tính EAR cho từng mắt
-        ear_left = EAR(leftEye)
-        ear_right = EAR(rightEye)
-
-        # Lấy các điểm mốc
         points = {key: face[value] for key, value in IDXS.items()}
+        pitch = np.arctan2(points["chin"][0] - points["nose"][0], points["chin"][1] - points["nose"][1]) * (180 / np.pi)
+        yaw = np.arctan2(points["nose"][0] - points["left_eye"][0], points["nose"][1] - points["left_eye"][1]) * (
+                    180 / np.pi) - offsetYaw
 
-        # Tính pitch (ngửa/cúi đầu) và yaw (quay trái/phải)
-        nose_chin = np.array(points["chin"]) - np.array(points["nose"])
-        nose_left_eye = np.array(points["nose"]) - np.array(points["left_eye"])
+        # Blink detection (giữ nguyên)
+        # if ear_left < THRESHOLD_EAR and ear_right < THRESHOLD_EAR and not closedEyes:
+        #     closedEyes = True
+        # elif closedEyes and ear_left > THRESHOLD_EAR and ear_right > THRESHOLD_EAR:
+        #     print("Chớp mắt")
+        #     closedEyes = False
 
-        pitch = np.arctan2(nose_chin[0], nose_chin[1]) * (180 / np.pi)
-        yaw = np.arctan2(nose_left_eye[0], nose_left_eye[1]) * (180 / np.pi) - offsetYaw
+        cv2.rectangle(img, (x_min_s, y_min_s), (x_max_s, y_max_s), (0, 255, 0), 2)
+        state = state_face(pitch, yaw)
 
-        # Kiểm tra chớp mắt
-        if ear_left < THRESHOLD_EAR and ear_right < THRESHOLD_EAR and not closedEyes:
-            closedEyes = True
-        if closedEyes and ear_left > THRESHOLD_EAR and ear_right > THRESHOLD_EAR:
-            print("Chớp mắt")
-            closedEyes = False
-        # for key, (x, y) in points.items():
-        #     cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
-        ## Chuẩn hóa khuôn mặt
-        w = x_max_scale - x_min_scale
-        h = y_max_scale - y_min_scale
-        x_top_left = x_min_scale / CAM_WIDTH
-        y_top_left = y_min_scale / CAM_HEIGHT
-        x_bottom_right = x_min_scale / CAM_WIDTH
-        y_bottom_right = y_min_scale / CAM_HEIGHT
-        face = img[y_min_scale:y_max_scale, x_min_scale:x_max_scale]
         if authentication:
             if cv2.waitKey(1) & 0xFF == ord('s'):
-                img_path = os.path.join(save_dir, f"{user_id}_{state_face(pitch, yaw)}_{detect_blur_sobel(face)}_{random.randint(0,100)}.jpg")
-                if brightness_mean(face) > BRIGHTNESS_THRESHOLD and detect_blur_sobel(face) > BLUR_SOBEL_THRESHOLD:
-                    cv2.imwrite(img_path, face)
+                brightness = brightness_mean(face_crop)
+                blur = detect_blur_sobel(face_crop)
+                if brightness > BRIGHTNESS_THRESHOLD and blur > BLUR_SOBEL_THRESHOLD:
+                    img_path = os.path.join(save_dir, f"{user_id}_{state}_{blur:.2f}_{random.randint(0, 100)}.jpg")
+                    cv2.imwrite(img_path, face_crop)
                     print(f"Image saved to {img_path}")
-                # authentication = False
-            cv2.putText(img, state_face(pitch, yaw), (x_min_scale, y_min_scale - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                        (0, 0, 255), 2, cv2.LINE_AA)
-            cv2.putText(img, f"{brightness_mean(face)}", (x_min_scale, y_min_scale - 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+            cv2.putText(img, f"{state} | Bright: {brightness_mean(face_crop):.1f}", (x_min_s, y_min_s - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
         else:
-            label, conf = predict_face(face, embedding_model, saved_embeddings, saved_labels)
-            cv2.putText(img, f"User: {label}",
-                        (x_min_scale, y_min_scale - 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1, (0, 0, 255), 2, cv2.LINE_AA)
+            label, conf = predict_face(face_crop)
+            cv2.putText(img, f"User: {label} | Confidence: {conf:.2f}", (x_min_s, y_min_s - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
-            # Hiển thị độ tự tin (confidence), làm tròn 2 chữ số
-            cv2.putText(img, f"Confidence: {conf:.2f}",
-                        (x_min_scale, y_min_scale - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.9, (0, 0, 255), 2, cv2.LINE_AA)
         cv2.imshow("Face Mesh", img)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
